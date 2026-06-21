@@ -18,35 +18,49 @@ func StartWorkerPool(workers int) {
 	for i := 1; i <= workers; i++ {
 		go func(workerID int) {
 			for tx := range RetryQueue {
-				log.Printf("Worker %d processing Tx %s (Retry %d)\n", workerID, tx.ID, tx.Retry)
+				log.Printf("[WORKER %d] Pulling Tx %s from healing queue (Attempt %d)\n", workerID, tx.ID, tx.Retry)
 				
-				// Simulate systematic back-off
+				// Systematic back-off formula execution
 				time.Sleep(time.Duration(tx.Retry*2) * time.Second) 
 				
-				// 80% chance of success on retry
 				if tx.Retry >= 2 { 
-					log.Printf("Tx %s Recovered successfully.", tx.ID)
+					log.Printf("[HEAL SUCCESS] Tx %s completely recovered\n", tx.ID)
 					BroadcastState(tx.ID, "SUCCESS", "Transaction recovered and confirmed.")
 				} else {
-					log.Printf("Tx %s failed. Re-queuing.", tx.ID)
-					BroadcastState(tx.ID, "RETRYING", "Gateway timeout. Retrying automatically...")
+					log.Printf("[HEAL RETRY] Tx %s gateway handshake failed. Re-queuing logic.\n", tx.ID)
 					tx.Retry++
-					RetryQueue <- tx
+					BroadcastState(tx.ID, tx.ID, "Gateway timeout. Retrying automatically...")
+					
+					// Non-blocking channel push guard
+					select {
+					case RetryQueue <- tx:
+					default:
+						log.Printf("[QUEUE CRITICAL] Channel capacity reached. Dropping Tx %s\n", tx.ID)
+					}
 				}
 			}
 		}(i)
 	}
 }
 
-// TransactionHandler simulates the primary failure
 func TransactionHandler(w http.ResponseWriter, r *http.Request) {
 	idemKey := r.Header.Get("X-Idempotency-Key")
 	
-	// Simulate immediate 504 Gateway Timeout
+	log.Printf("[INGESTION] Processing initial request for key: %s\n", idemKey)
+	
+	// Pillar 3 Resolution: Broadcast explicit PROCESSING phase immediately
+	BroadcastState(idemKey, "PROCESSING", "Cryptographic ledger check initiated...")
+	time.Sleep(800 * time.Millisecond) // Visual hold so judges catch the transition
+
+	// Simulate immediate 504 Gateway Failure
+	log.Printf("[GATEWAY FAILURE] Forcing HTTP 504 on key: %s\n", idemKey)
 	BroadcastState(idemKey, "PANIC_LOCK", "Network paused. Your funds are safe. Retrying automatically...")
 	
-	// Route to background healing queue
-	RetryQueue <- Transaction{ID: idemKey, Amount: 150.00, Retry: 1}
+	select {
+	case RetryQueue <- Transaction{ID: idemKey, Amount: 150.00, Retry: 1}:
+	default:
+		log.Printf("[QUEUE CRITICAL] Initial push failed for key: %s\n", idemKey)
+	}
 	
 	w.WriteHeader(http.StatusGatewayTimeout)
 }
