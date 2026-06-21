@@ -10,11 +10,26 @@ import (
 	"time"
 )
 
+// corsMiddleware intercepts all requests, handling preflight checks and granting port access
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*") // Allow requests from any port
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "X-Idempotency-Key, Content-Type")
+
+		// Instantly approve the browser's hidden preflight request
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
-	// Initialize Redis (Mocked here for MVP, replace with go-redis)
 	InitRedis()
 	
-	// Start Worker Pool
 	go StartWorkerPool(5) 
 
 	mux := http.NewServeMux()
@@ -23,10 +38,9 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    ":8080",
-		Handler: mux,
+		Handler: corsMiddleware(mux), // Wrap the entire engine router in our new CORS guard
 	}
 
-	// Server execution in a goroutine
 	go func() {
 		log.Println("Sahayak Engine active on port 8080")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -34,7 +48,6 @@ func main() {
 		}
 	}()
 
-	// Graceful Shutdown OS Signal Trap
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
